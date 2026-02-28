@@ -9,6 +9,8 @@ import wave
 import numpy as np
 import sounddevice as sd
 
+from src.audio_feedback import beep as _beep
+
 
 class VoiceRecorder:
     """Records microphone audio in two modes:
@@ -146,12 +148,3 @@ class VoiceRecorder:
         return str(sd.query_devices())
 
 
-# ---- audio feedback -------------------------------------------------- #
-
-def _beep(freq: int, duration_ms: int):
-    try:
-        if os.name == "nt":
-            import winsound
-            winsound.Beep(freq, duration_ms)
-    except Exception:
-        pass

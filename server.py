@@ -33,9 +33,8 @@ def _log(msg: str):
 
 def _beep(freq: int, duration_ms: int):
     try:
-        if os.name == "nt":
-            import winsound
-            winsound.Beep(freq, duration_ms)
+        from src.audio_feedback import beep
+        beep(freq, duration_ms)
     except Exception:
         pass
 

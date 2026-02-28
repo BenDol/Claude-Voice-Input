@@ -17,6 +17,9 @@ def _get_foreground_rect() -> tuple[int, int, int, int] | None:
     """Return (left, top, right, bottom) of the focused window, or None."""
     if os.name == "nt":
         return _win32_foreground_rect()
+    import sys
+    if sys.platform == "darwin":
+        return _macos_foreground_rect()
     return _x11_foreground_rect()
 
 
@@ -77,14 +80,38 @@ def _x11_foreground_rect():
     return None
 
 
+# -- macOS ------------------------------------------------------------- #
+
+def _macos_foreground_rect():
+    """Use AppleScript to get the frontmost window bounds (macOS)."""
+    try:
+        script = (
+            'tell application "System Events" to tell (first process '
+            'whose frontmost is true) to get {position, size} of window 1'
+        )
+        out = subprocess.check_output(
+            ["osascript", "-e", script],
+            stderr=subprocess.DEVNULL, timeout=1,
+        ).decode().strip()
+        # Output: "x, y, w, h"
+        parts = [int(p.strip()) for p in out.split(",")]
+        if len(parts) == 4:
+            x, y, w, h = parts
+            return x, y, x + w, y + h
+    except Exception:
+        pass
+    return None
+
+
 # ---- overlay --------------------------------------------------------- #
 
-_SIZE = 18
+_DOT = 18
 _MARGIN = 12
+_LABEL_PAD = 6
 
 
 class RecordingOverlay:
-    """Tiny solid-colored dot that follows the active window (bottom-right)."""
+    """Dot + hotkey label that follows the active window (bottom-left)."""
 
     HIDDEN = "hidden"
     RECORDING = "recording"
@@ -92,16 +119,20 @@ class RecordingOverlay:
 
     _COLOR = {RECORDING: "#cc0000", TRANSCRIBING: "#b8860b"}
 
-    def __init__(self):
+    def __init__(self, hotkey: str = ""):
         self._desired = self.HIDDEN
         self._current = self.HIDDEN
+        self._hotkey = hotkey
         self._root = None
         self._canvas = None
         self._dot_id = None
+        self._label = None
         self._blink = True
         self._ready = threading.Event()
         self._screen_w = 0
         self._screen_h = 0
+        self._win_w = _DOT
+        self._win_h = _DOT
 
     # ---- public API (thread-safe) ------------------------------------ #
 
@@ -133,29 +164,63 @@ class RecordingOverlay:
         root.overrideredirect(True)
         root.attributes("-topmost", True)
 
-        # Fully transparent background; only the drawn oval is visible
+        # Make the background transparent where possible
         transparent = "#010101"
-        root.configure(bg=transparent)
-        try:
-            root.attributes("-transparentcolor", transparent)
-        except Exception:
-            pass
+        if os.name == "nt":
+            # Windows: color-key transparency
+            root.configure(bg=transparent)
+            try:
+                root.attributes("-transparentcolor", transparent)
+            except Exception:
+                transparent = "#cc0000"  # fallback: match dot color
+                root.configure(bg=transparent)
+        else:
+            # macOS / Linux: use alpha for near-transparency on the bg
+            transparent = "#000000"
+            root.configure(bg=transparent)
+            try:
+                root.attributes("-alpha", 0.95)
+            except Exception:
+                pass
 
         self._screen_w = root.winfo_screenwidth()
         self._screen_h = root.winfo_screenheight()
+        self._transparent = transparent
 
-        root.geometry(self._fallback_geometry())
+        font_family = "Segoe UI" if os.name == "nt" else "sans-serif"
+
+        frame = tk.Frame(root, bg=transparent)
+        frame.pack(expand=True, fill="both")
 
         canvas = tk.Canvas(
-            root, width=_SIZE, height=_SIZE,
+            frame, width=_DOT, height=_DOT,
             bg=transparent, highlightthickness=0, bd=0,
         )
-        canvas.pack()
+        canvas.pack(side="left")
         self._canvas = canvas
         self._dot_id = canvas.create_oval(
-            0, 0, _SIZE, _SIZE, fill="#cc0000", outline="#cc0000",
+            0, 0, _DOT, _DOT, fill="#cc0000", outline="#cc0000",
         )
 
+        label = tk.Label(
+            frame, text="", fg="#cc0000", bg=transparent,
+            font=(font_family, 9), anchor="w",
+        )
+        label.pack(side="left", padx=(_LABEL_PAD, 0))
+        self._label = label
+
+        # Measure width with hotkey text to set window size
+        if self._hotkey:
+            label.configure(text=self._hotkey)
+            root.update_idletasks()
+            self._win_w = _DOT + _LABEL_PAD + label.winfo_reqwidth() + 4
+            self._win_h = max(_DOT, label.winfo_reqheight())
+            label.configure(text="")
+        else:
+            self._win_w = _DOT
+            self._win_h = _DOT
+
+        root.geometry(self._fallback_geometry())
         root.withdraw()
         self._ready.set()
         self._poll()
@@ -164,21 +229,21 @@ class RecordingOverlay:
     # ---- positioning ------------------------------------------------- #
 
     def _fallback_geometry(self) -> str:
-        x = self._screen_w - _SIZE - _MARGIN
-        y = self._screen_h - _SIZE - _MARGIN - 40   # above taskbar
-        return f"{_SIZE}x{_SIZE}+{x}+{y}"
+        x = _MARGIN
+        y = self._screen_h - self._win_h - _MARGIN - 40
+        return f"{self._win_w}x{self._win_h}+{x}+{y}"
 
     def _reposition(self):
-        """Move overlay to the bottom-right corner of the foreground window."""
+        """Move overlay to the bottom-left corner of the foreground window."""
         rect = _get_foreground_rect()
         if rect:
             left, top, right, bottom = rect
-            x = max(0, min(right - _SIZE - _MARGIN, self._screen_w - _SIZE))
-            y = max(0, min(bottom - _SIZE - _MARGIN, self._screen_h - _SIZE))
+            x = max(0, left + _MARGIN)
+            y = max(0, min(bottom - self._win_h - _MARGIN, self._screen_h - self._win_h))
         else:
-            x = self._screen_w - _SIZE - _MARGIN
-            y = self._screen_h - _SIZE - _MARGIN - 40
-        self._root.geometry(f"{_SIZE}x{_SIZE}+{x}+{y}")
+            x = _MARGIN
+            y = self._screen_h - self._win_h - _MARGIN - 40
+        self._root.geometry(f"{self._win_w}x{self._win_h}+{x}+{y}")
 
     # ---- poll loop --------------------------------------------------- #
 
@@ -199,6 +264,8 @@ class RecordingOverlay:
                 self._canvas.itemconfigure(
                     self._dot_id, fill=color, outline=color,
                 )
+                if self._hotkey:
+                    self._label.configure(text=self._hotkey, fg=color)
                 self._root.deiconify()
                 self._current = desired
                 self._blink = True
@@ -207,7 +274,7 @@ class RecordingOverlay:
 
             if desired == self.RECORDING:
                 self._blink = not self._blink
-                vis = color if self._blink else ""
+                vis = color if self._blink else self._transparent
                 self._canvas.itemconfigure(
                     self._dot_id, fill=vis, outline=vis,
                 )
@@ -216,5 +283,5 @@ class RecordingOverlay:
                     self._dot_id, fill=color, outline=color,
                 )
 
-        interval = 200 if self._current != self.HIDDEN else 500
+        interval = 600 if self._current != self.HIDDEN else 500
         self._root.after(interval, self._poll)

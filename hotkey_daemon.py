@@ -35,9 +35,8 @@ def _log(msg: str):
 
 def _beep(freq: int, dur: int):
     try:
-        if os.name == "nt":
-            import winsound
-            winsound.Beep(freq, dur)
+        from src.audio_feedback import beep
+        beep(freq, dur)
     except Exception:
         pass
 
@@ -112,6 +111,13 @@ def main():
     except ImportError:
         _log("'keyboard' package not installed — exiting")
         return
+    except Exception as exc:
+        # keyboard library needs root on Linux and doesn't work on macOS
+        _log(f"keyboard init failed: {exc}")
+        if os.name != "nt":
+            _log("NOTE: The 'keyboard' library requires root on Linux "
+                 "and is unsupported on macOS. Use /voice command instead.")
+        return
 
     from src.recorder import VoiceRecorder
     from src.transcriber import create_transcriber
@@ -132,7 +138,7 @@ def main():
 
     _log(f"Backend: {transcriber.name}")
 
-    overlay = RecordingOverlay()
+    overlay = RecordingOverlay(hotkey=binding)
     overlay.start()
 
     # ---- hotkey toggle ---- #

@@ -3,7 +3,9 @@
     "backend": "faster_whisper",
     "faster_whisper": {
       "model_size": "base",
-      "device": "cpu"
+      "device": "cpu",
+      "compute_type": "int8",
+      "preload": true
     },
     "openai_api": {
       "api_key": "",

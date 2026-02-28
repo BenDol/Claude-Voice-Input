@@ -47,10 +47,19 @@ class OpenAIWhisperAPI(Transcriber):
 
 
 class FasterWhisperLocal(Transcriber):
-    def __init__(self, model_size: str = "base", device: str = "auto"):
+    def __init__(
+        self,
+        model_size: str = "base",
+        device: str = "auto",
+        compute_type: str = "default",
+        preload: bool = False,
+    ):
         self._model_size = model_size
         self._device = device
+        self._compute_type = compute_type
         self._model = None
+        if preload:
+            self._ensure_model()
 
     def _ensure_model(self):
         if self._model is not None:
@@ -61,11 +70,15 @@ class FasterWhisperLocal(Transcriber):
             raise ImportError(
                 "faster-whisper is not installed.  Run:  pip install faster-whisper"
             )
-        self._model = WhisperModel(self._model_size, device=self._device)
+        self._model = WhisperModel(
+            self._model_size,
+            device=self._device,
+            compute_type=self._compute_type,
+        )
 
     @property
     def name(self) -> str:
-        return "Faster Whisper (local)"
+        return f"Faster Whisper (local, {self._model_size}, {self._compute_type})"
 
     def transcribe(self, audio_path: str) -> str:
         self._ensure_model()
@@ -86,6 +99,11 @@ def create_transcriber(config: dict) -> Transcriber:
 
     if backend == "faster_whisper":
         s = config.get("faster_whisper", {})
-        return FasterWhisperLocal(model_size=s.get("model_size", "base"), device=s.get("device", "auto"))
+        return FasterWhisperLocal(
+            model_size=s.get("model_size", "base"),
+            device=s.get("device", "auto"),
+            compute_type=s.get("compute_type", "default"),
+            preload=s.get("preload", False),
+        )
 
     raise ValueError(f"Unknown transcriber backend: '{backend}'.  Supported: openai_api, faster_whisper")
