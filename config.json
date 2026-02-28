@@ -5,7 +5,8 @@
       "model_size": "base",
       "device": "cpu",
       "compute_type": "int8",
-      "preload": true
+      "preload": true,
+      "vad_filter": true
     },
     "openai_api": {
       "api_key": "",

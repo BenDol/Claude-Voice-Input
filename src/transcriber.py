@@ -53,10 +53,12 @@ class FasterWhisperLocal(Transcriber):
         device: str = "auto",
         compute_type: str = "default",
         preload: bool = False,
+        vad_filter: bool = True,
     ):
         self._model_size = model_size
         self._device = device
         self._compute_type = compute_type
+        self._vad_filter = vad_filter
         self._model = None
         if preload:
             self._ensure_model()
@@ -82,7 +84,11 @@ class FasterWhisperLocal(Transcriber):
 
     def transcribe(self, audio_path: str) -> str:
         self._ensure_model()
-        segments, _ = self._model.transcribe(audio_path)
+        segments, _ = self._model.transcribe(
+            audio_path,
+            vad_filter=self._vad_filter,
+            vad_parameters={"min_silence_duration_ms": 500},
+        )
         return " ".join(seg.text.strip() for seg in segments)
 
 
@@ -104,6 +110,7 @@ def create_transcriber(config: dict) -> Transcriber:
             device=s.get("device", "auto"),
             compute_type=s.get("compute_type", "default"),
             preload=s.get("preload", False),
+            vad_filter=s.get("vad_filter", True),
         )
 
     raise ValueError(f"Unknown transcriber backend: '{backend}'.  Supported: openai_api, faster_whisper")
