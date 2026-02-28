@@ -1,0 +1,1 @@
+Call voice_record to start recording my voice from the microphone. Then wait — do NOT call voice_stop until I explicitly tell you I am done (e.g. "stop", "done", "submit", "send it"). Once I say I'm done, call voice_stop to get the transcription. Then respond to the transcribed text as if I had typed it directly as my message.

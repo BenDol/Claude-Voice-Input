@@ -1,0 +1,25 @@
+{
+  "transcriber": {
+    "backend": "faster_whisper",
+    "faster_whisper": {
+      "model_size": "base",
+      "device": "auto"
+    },
+    "openai_api": {
+      "api_key": "",
+      "model": "whisper-1"
+    }
+  },
+  "recording": {
+    "sample_rate": 16000,
+    "channels": 1,
+    "speech_threshold": 500,
+    "auto_stop_on_silence": false,
+    "max_seconds": 300
+  },
+  "hotkey": {
+    "enabled": true,
+    "binding": "ctrl+alt+v",
+    "auto_paste": true
+  }
+}
