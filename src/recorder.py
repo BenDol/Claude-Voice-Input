@@ -72,6 +72,22 @@ class VoiceRecorder:
         self._frames = []
         return self._save_wav(audio)
 
+    def get_tail_wav(self, seconds: float = 3.0) -> str | None:
+        """Save the last N seconds of buffered audio to a temp WAV. Non-destructive."""
+        if not self._frames:
+            return None
+        samples_needed = int(self.sample_rate * seconds)
+        # Concatenate from the end
+        tail_frames = []
+        total = 0
+        for frame in reversed(self._frames):
+            tail_frames.insert(0, frame)
+            total += len(frame)
+            if total >= samples_needed:
+                break
+        audio = np.concatenate(tail_frames)[-samples_needed:]
+        return self._save_wav(audio)
+
     # ---- auto-stop (silence detection) -------------------------------- #
 
     def record_until_silence(

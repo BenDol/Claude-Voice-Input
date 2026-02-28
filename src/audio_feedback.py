@@ -3,10 +3,16 @@
 import os
 import subprocess
 import sys
+import threading
 
 
 def beep(freq: int = 440, duration_ms: int = 200):
-    """Play a short tone. Best-effort — silently does nothing on failure."""
+    """Play a short tone without blocking. Best-effort — silently does nothing on failure."""
+    threading.Thread(target=_beep_sync, args=(freq, duration_ms), daemon=True).start()
+
+
+def _beep_sync(freq: int, duration_ms: int):
+    """Synchronous beep implementation."""
     try:
         if os.name == "nt":
             import winsound

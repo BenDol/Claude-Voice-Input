@@ -103,6 +103,7 @@ def main():
     binding = hotkey_cfg.get("binding", "ctrl+alt+v")
     auto_paste = hotkey_cfg.get("auto_paste", True)
     auto_send_keywords = [kw.lower().strip() for kw in hotkey_cfg.get("auto_send_keywords", [])]
+    auto_stop_on_keyword = hotkey_cfg.get("auto_stop_on_keyword", True)
 
     # ---- load components ---- #
 
@@ -147,6 +148,28 @@ def main():
     state = {"recording": False, "busy": False}
     lock = threading.Lock()
 
+    def _stop_and_transcribe():
+        """Stop recording and kick off transcription. Caller must hold lock."""
+        state["recording"] = False
+        state["busy"] = True
+        _beep(440, 200)
+        overlay.show_transcribing()
+        _log("Recording stopped")
+
+        audio_path = recorder.stop()
+        if not audio_path:
+            _log("Empty recording")
+            _beep(220, 300)
+            overlay.hide()
+            state["busy"] = False
+            return
+
+        threading.Thread(
+            target=_transcribe_and_paste,
+            args=(audio_path,),
+            daemon=True,
+        ).start()
+
     def on_hotkey():
         with lock:
             if state["busy"]:
@@ -161,6 +184,11 @@ def main():
                     recorder.start()
                     overlay.show_recording()
                     _log("Recording started")
+                    if auto_stop_on_keyword and auto_send_keywords:
+                        threading.Thread(
+                            target=_keyword_watch_loop,
+                            daemon=True,
+                        ).start()
                 except Exception as exc:
                     _log(f"Mic error: {exc}")
                     _beep(220, 300)
@@ -168,25 +196,36 @@ def main():
                     overlay.hide()
             else:
                 # ---- STOP ----
-                state["recording"] = False
-                state["busy"] = True
-                _beep(440, 200)
-                overlay.show_transcribing()
-                _log("Recording stopped")
+                _stop_and_transcribe()
 
-                audio_path = recorder.stop()
-                if not audio_path:
-                    _log("Empty recording")
-                    _beep(220, 300)
-                    overlay.hide()
-                    state["busy"] = False
-                    return
-
-                threading.Thread(
-                    target=_transcribe_and_paste,
-                    args=(audio_path,),
-                    daemon=True,
-                ).start()
+    def _keyword_watch_loop():
+        """Periodically transcribe tail audio to detect auto-send keywords."""
+        _log("Keyword watch started")
+        # Wait a bit before first check to accumulate audio
+        time.sleep(2.0)
+        while state["recording"] and not state["busy"]:
+            tail_path = recorder.get_tail_wav(seconds=3.0)
+            if tail_path:
+                try:
+                    tail_text = transcriber.transcribe(tail_path)
+                except Exception:
+                    tail_text = ""
+                finally:
+                    try:
+                        os.unlink(tail_path)
+                    except OSError:
+                        pass
+                if tail_text:
+                    norm = tail_text.lower().replace("'", "").replace("\u2019", "").rstrip(".!?,;: ")
+                    for kw in auto_send_keywords:
+                        if norm.endswith(kw):
+                            _log(f"Keyword '{kw}' detected in live audio — auto-stopping")
+                            with lock:
+                                if state["recording"] and not state["busy"]:
+                                    _stop_and_transcribe()
+                            return
+            time.sleep(1.5)
+        _log("Keyword watch ended")
 
     def _transcribe_and_paste(audio_path: str):
         try:
@@ -239,20 +278,16 @@ def main():
                     _log(f"Auto-send keyword '{kw}' detected")
                     break
 
-        if not text:
-            _log("Text empty after keyword removal")
-            _beep(220, 300)
-            return
-
         try:
             import pyperclip
-            pyperclip.copy(text)
-            if auto_paste:
-                time.sleep(0.05)
-                kb.send("ctrl+v")
-                if should_send:
-                    time.sleep(0.3)
-                    kb.press_and_release("enter")
+            if text:
+                pyperclip.copy(text)
+                if auto_paste:
+                    time.sleep(0.05)
+                    kb.send("ctrl+v")
+            if should_send:
+                time.sleep(0.3)
+                kb.press_and_release("enter")
         except Exception as exc:
             _log(f"Paste error: {exc}")
             _beep(220, 300)
