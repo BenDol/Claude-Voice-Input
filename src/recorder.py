@@ -19,15 +19,19 @@ class VoiceRecorder:
     * **Auto-stop**     – ``record_until_silence()`` (MCP tool)
     """
 
+    NUM_BANDS = 7  # match overlay bar count
+
     def __init__(
         self,
         sample_rate: int = 16000,
         channels: int = 1,
         speech_threshold: float = 500,
+        on_levels=None,
     ):
         self.sample_rate = sample_rate
         self.channels = channels
         self.speech_threshold = speech_threshold
+        self.on_levels = on_levels  # callback(levels: list[float])
         self._frames: list[np.ndarray] = []
         self._stream: sd.InputStream | None = None
         self._is_recording = False
@@ -50,6 +54,8 @@ class VoiceRecorder:
     def _toggle_cb(self, indata, frame_count, time_info, status):
         if self._is_recording:
             self._frames.append(indata.copy())
+            if self.on_levels:
+                self.on_levels(self._compute_bands(indata))
 
     def stop(self) -> str | None:
         """Stop a toggle-mode recording.  Returns WAV path or None."""
@@ -130,6 +136,39 @@ class VoiceRecorder:
             return None
 
         return self._save_wav(np.concatenate(frames))
+
+    # ---- audio analysis ------------------------------------------------- #
+
+    def _compute_bands(self, indata: np.ndarray) -> list[float]:
+        """Compute frequency band levels (0.0–1.0) for the visualizer."""
+        audio = indata[:, 0].astype(np.float32) if indata.ndim > 1 else indata.astype(np.float32)
+        n = len(audio)
+        if n < 2:
+            return [0.0] * self.NUM_BANDS
+
+        # FFT magnitude spectrum (positive frequencies only)
+        fft = np.abs(np.fft.rfft(audio))
+        freqs = np.fft.rfftfreq(n, d=1.0 / self.sample_rate)
+
+        # Split into bands (logarithmic spacing for natural feel)
+        band_edges = np.logspace(
+            np.log10(80), np.log10(min(7500, self.sample_rate / 2)),
+            self.NUM_BANDS + 1,
+        )
+
+        levels = []
+        for i in range(self.NUM_BANDS):
+            mask = (freqs >= band_edges[i]) & (freqs < band_edges[i + 1])
+            if mask.any():
+                band_power = np.mean(fft[mask])
+                # Normalize: log scale, clamped to 0–1
+                db = 20 * np.log10(max(band_power, 1e-10)) - 20
+                level = max(0.0, min(1.0, (db + 10) / 50))
+            else:
+                level = 0.0
+            levels.append(level)
+
+        return levels
 
     # ---- helpers ------------------------------------------------------ #
 

@@ -123,11 +123,15 @@ def main():
     from src.transcriber import create_transcriber
     from src.overlay import RecordingOverlay
 
+    overlay = RecordingOverlay(hotkey=binding)
+    overlay.start()
+
     rec_cfg = config.get("recording", {})
     recorder = VoiceRecorder(
         sample_rate=rec_cfg.get("sample_rate", 16000),
         channels=rec_cfg.get("channels", 1),
         speech_threshold=rec_cfg.get("speech_threshold", 500),
+        on_levels=overlay.set_levels,
     )
 
     try:
@@ -137,9 +141,6 @@ def main():
         return
 
     _log(f"Backend: {transcriber.name}")
-
-    overlay = RecordingOverlay(hotkey=binding)
-    overlay.start()
 
     # ---- hotkey toggle ---- #
 
