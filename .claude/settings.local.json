@@ -18,7 +18,8 @@
       "Bash(xargs grep:*)",
       "Bash(C:/Projects/claude/plugins/voice-input/.venv/Scripts/python.exe:*)",
       "Bash(C:/Projects/claude/plugins/voice-input/.venv/Scripts/pip show:*)",
-      "Bash(claude mcp:*)"
+      "Bash(claude mcp:*)",
+      "Bash(C:/Projects/claude/plugins/voice-input/.venv/Scripts/pythonw.exe:*)"
     ]
   }
 }

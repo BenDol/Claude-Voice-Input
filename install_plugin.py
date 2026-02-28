@@ -140,12 +140,15 @@ def step_install_slash_commands():
     commands_dir = os.path.join(claude_dir, "commands")
     os.makedirs(commands_dir, exist_ok=True)
 
-    for name in ("voice", "voice-kill", "voice-start"):
-        src = os.path.join(PLUGIN_DIR, "commands", f"{name}.md")
-        dst = os.path.join(commands_dir, f"{name}.md")
-        if os.path.isfile(src):
-            shutil.copy2(src, dst)
-            _print(f"  /{name} installed")
+    src_dir = os.path.join(PLUGIN_DIR, "commands")
+    for filename in sorted(os.listdir(src_dir)):
+        if not filename.endswith(".md"):
+            continue
+        src = os.path.join(src_dir, filename)
+        dst = os.path.join(commands_dir, filename)
+        shutil.copy2(src, dst)
+        name = filename.removesuffix(".md")
+        _print(f"  /{name} installed")
     _print("Slash commands installed")
 
 

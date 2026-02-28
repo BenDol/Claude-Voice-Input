@@ -162,6 +162,11 @@ class VoiceRecorder:
         if n < 2:
             return [0.0] * self.NUM_BANDS
 
+        # Noise gate: suppress visualizer for ambient noise below speech threshold
+        rms = np.sqrt(np.mean(audio ** 2))
+        if rms < self.speech_threshold:
+            return [0.0] * self.NUM_BANDS
+
         # FFT magnitude spectrum (positive frequencies only)
         fft = np.abs(np.fft.rfft(audio))
         freqs = np.fft.rfftfreq(n, d=1.0 / self.sample_rate)
