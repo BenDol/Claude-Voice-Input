@@ -104,6 +104,10 @@ def main():
     auto_paste = hotkey_cfg.get("auto_paste", True)
     auto_send_keywords = [kw.lower().strip() for kw in hotkey_cfg.get("auto_send_keywords", [])]
     auto_stop_on_keyword = hotkey_cfg.get("auto_stop_on_keyword", True)
+    undo_enabled = hotkey_cfg.get("undo_enabled", True)
+    undo_phrases = [p.lower().strip() for p in hotkey_cfg.get("undo_phrases", [
+        "forget that last part", "forget that", "actually forget that",
+    ]) if p and p.strip()] if undo_enabled else []
 
     # ---- load components ---- #
 
@@ -227,6 +231,35 @@ def main():
             time.sleep(1.5)
         _log("Keyword watch ended")
 
+    def _apply_undo_phrases(text: str) -> str:
+        """Remove the sentence before each occurrence of any undo phrase."""
+        import re
+        # Sort longest first so "forget that last part" matches before "forget that"
+        sorted_phrases = sorted(undo_phrases, key=len, reverse=True)
+        pattern = re.compile(
+            "|".join(re.escape(p) for p in sorted_phrases),
+            re.IGNORECASE,
+        )
+        while True:
+            m = pattern.search(text)
+            if not m:
+                break
+            start, end = m.start(), m.end()
+            # Skip any trailing punctuation/whitespace after the phrase
+            while end < len(text) and text[end] in ".!?,;: ":
+                end += 1
+            after = text[end:]
+            before = text[:start].rstrip()
+            # Remove back to the last sentence boundary (. ! ?)
+            # or the start of the text
+            last_period = max(before.rfind(". "), before.rfind("! "), before.rfind("? "))
+            if last_period >= 0:
+                before = before[:last_period + 1]
+            else:
+                before = ""
+            text = (before + " " + after).strip() if before and after else (before + after).strip()
+        return text
+
     def _transcribe_and_paste(audio_path: str):
         try:
             _log("Transcribing...")
@@ -250,6 +283,11 @@ def main():
 
         text = text.strip()
         _log(f"Transcribed ({len(text)} chars): {text[:120]}")
+
+        # Process undo phrase — remove the sentence before each occurrence
+        if undo_phrases and text:
+            text = _apply_undo_phrases(text)
+            _log(f"After undo processing ({len(text)} chars): {text[:120]}")
 
         # Check for auto-send keyword at the end
         # Strip apostrophes/punctuation for fuzzy matching

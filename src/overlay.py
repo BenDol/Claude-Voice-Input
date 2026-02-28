@@ -405,8 +405,8 @@ class RecordingOverlay:
 
             self._update_bars(color, color_dim, desired)
 
-        # 16ms (~60fps) when visible for smooth tracking, slow when hidden
-        interval = 16 if self._current != self.HIDDEN else 500
+        # 16ms (~60fps) when visible, 50ms when hidden for fast response
+        interval = 16 if self._current != self.HIDDEN else 50
         self._root.after(interval, self._poll)
 
     def _update_bars(self, color: str, color_dim: str, state: str):

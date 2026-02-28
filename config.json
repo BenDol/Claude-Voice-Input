@@ -30,7 +30,9 @@
     "enabled": true,
     "binding": "alt+q",
     "auto_paste": true,
-    "auto_send_keywords": ["lets go", "make it happen", "go go", "send it"],
-    "auto_stop_on_keyword": true
+    "auto_send_keywords": ["lets go", "make it happen", "go go", "send it", "send", "over and out"],
+    "auto_stop_on_keyword": true,
+    "undo_enabled": true,
+    "undo_phrases": ["forget that last part", "forget that", "actually forget that"]
   }
 }
