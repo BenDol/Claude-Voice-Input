@@ -7,7 +7,7 @@ Run with any system Python (3.10+):
 Handles everything:
   1. Creates / refreshes the virtual environment
   2. Installs pip dependencies
-  3. Registers the MCP server in ~/.claude/settings.json
+  3. Registers the MCP server in ~/.claude.json (user scope, all projects)
   4. Installs the /voice slash command
 """
 
@@ -40,9 +40,18 @@ def _run(cmd: list[str], **kwargs):
 
 
 def _venv_python() -> str:
+    """Return path to the venv Python used for pip / setup tasks."""
     venv_dir = os.path.join(PLUGIN_DIR, ".venv")
     if os.name == "nt":
         return os.path.join(venv_dir, "Scripts", "python.exe")
+    return os.path.join(venv_dir, "bin", "python")
+
+
+def _venv_pythonw() -> str:
+    """Return path to the windowless Python (no console on Windows)."""
+    venv_dir = os.path.join(PLUGIN_DIR, ".venv")
+    if os.name == "nt":
+        return os.path.join(venv_dir, "Scripts", "pythonw.exe")
     return os.path.join(venv_dir, "bin", "python")
 
 
@@ -73,46 +82,71 @@ def step_install_deps():
 
 
 def step_register_mcp():
-    claude_dir = os.path.expanduser("~/.claude")
-    os.makedirs(claude_dir, exist_ok=True)
-    settings_path = os.path.join(claude_dir, "settings.json")
+    """Register via `claude mcp add -s user` (user scope = all projects).
 
-    settings: dict = {}
-    if os.path.exists(settings_path):
-        with open(settings_path) as f:
+    Falls back to manually editing ~/.claude.json if the CLI isn't available.
+    """
+    server_py = os.path.join(PLUGIN_DIR, "server.py").replace("\\", "/")
+    python = _venv_pythonw().replace("\\", "/")
+
+    # Prefer the CLI — it knows the exact config format
+    claude_bin = shutil.which("claude")
+    if claude_bin:
+        # Remove first (ignore errors if not present)
+        subprocess.run(
+            [claude_bin, "mcp", "remove", "-s", "user", "voice-input"],
+            capture_output=True,
+        )
+        result = subprocess.run(
+            [claude_bin, "mcp", "add", "-s", "user",
+             "--transport", "stdio", "voice-input", "--", python, server_py],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            _print("MCP server registered (user scope) via claude CLI")
+            return
+        _print(f"CLI registration failed ({result.stderr.strip()}), using fallback...")
+
+    # Fallback: write directly to ~/.claude.json top-level mcpServers
+    claude_json = os.path.join(os.path.expanduser("~"), ".claude.json")
+    data: dict = {}
+    if os.path.exists(claude_json):
+        with open(claude_json) as f:
             try:
-                settings = json.load(f)
+                data = json.load(f)
             except json.JSONDecodeError:
-                backup = settings_path + ".bak"
-                shutil.copy2(settings_path, backup)
-                _print(f"WARNING: corrupt {settings_path} — backup at {backup}")
+                backup = claude_json + ".bak"
+                shutil.copy2(claude_json, backup)
+                _print(f"WARNING: corrupt {claude_json} — backup at {backup}")
 
-    if "mcpServers" not in settings:
-        settings["mcpServers"] = {}
+    if "mcpServers" not in data:
+        data["mcpServers"] = {}
 
-    server_path = os.path.join(PLUGIN_DIR, "server.py")
-    settings["mcpServers"]["voice-input"] = {
-        "command": _venv_python().replace("\\", "/"),
-        "args": [server_path.replace("\\", "/")],
+    data["mcpServers"]["voice-input"] = {
+        "type": "stdio",
+        "command": python,
+        "args": [server_py],
+        "env": {},
     }
 
-    with open(settings_path, "w") as f:
-        json.dump(settings, f, indent=2)
+    with open(claude_json, "w") as f:
+        json.dump(data, f, indent=2)
 
-    _print(f"MCP server registered in {settings_path}")
+    _print(f"MCP server registered (user scope) in {claude_json}")
 
 
-def step_install_slash_command():
+def step_install_slash_commands():
     claude_dir = os.path.expanduser("~/.claude")
     commands_dir = os.path.join(claude_dir, "commands")
     os.makedirs(commands_dir, exist_ok=True)
 
-    src = os.path.join(PLUGIN_DIR, "commands", "voice.md")
-    dst = os.path.join(commands_dir, "voice.md")
-
-    # Always overwrite to keep it in sync with the plugin version
-    shutil.copy2(src, dst)
-    _print(f"/voice command installed to {dst}")
+    for name in ("voice", "voice-kill", "voice-start"):
+        src = os.path.join(PLUGIN_DIR, "commands", f"{name}.md")
+        dst = os.path.join(commands_dir, f"{name}.md")
+        if os.path.isfile(src):
+            shutil.copy2(src, dst)
+            _print(f"  /{name} installed")
+    _print("Slash commands installed")
 
 
 def step_show_summary():
@@ -140,7 +174,7 @@ def step_show_summary():
     _print("  /voice   Alternative: triggers recording via Claude.")
     _print()
     _print("Visual indicator:")
-    _print("  Red pill (top-right corner) = recording")
+    _print("  Red pill (bottom-right of active window) = recording")
     _print("  Amber pill                  = transcribing")
     _print()
     _print("Audio cues:")
@@ -167,7 +201,7 @@ def main():
         ("[2/5] Setting up virtual environment", step_create_venv),
         ("[3/5] Installing dependencies", step_install_deps),
         ("[4/5] Registering MCP server", step_register_mcp),
-        ("[5/5] Installing /voice command", step_install_slash_command),
+        ("[5/5] Installing slash commands", step_install_slash_commands),
     ]
 
     for label, fn in steps:

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Voice Input -- MCP server + global hotkey for Claude Code.
+"""Voice Input -- MCP server for Claude Code.
 
 Two ways to use:
-  1. /voice  slash command  -> Claude calls the voice_input MCP tool
-  2. Hotkey  (Ctrl+Shift+Space by default) -> records, transcribes,
-     and pastes the text straight into the prompt input
+  1. /voice  slash command  -> Claude calls the voice_record / voice_stop tools
+  2. Hotkey  (Ctrl+Shift+D by default) -> handled by hotkey_daemon.py,
+     which this server spawns automatically on startup
 """
 
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import threading
-import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -35,13 +35,12 @@ def _beep(freq: int, duration_ms: int):
     try:
         if os.name == "nt":
             import winsound
-
             winsound.Beep(freq, duration_ms)
     except Exception:
         pass
 
 
-# ---- init ------------------------------------------------------------ #
+# ---- MCP server (must be created immediately for fast handshake) ----- #
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -49,38 +48,63 @@ except ImportError:
     _log("ERROR: mcp package not installed.  Run setup.bat first.")
     sys.exit(1)
 
-from src.overlay import RecordingOverlay
-from src.recorder import VoiceRecorder
-from src.transcriber import create_transcriber
-
+mcp = FastMCP("voice-input")
 config = _load_config()
 rec_cfg = config.get("recording", {})
-
-
-def _make_recorder() -> VoiceRecorder:
-    return VoiceRecorder(
-        sample_rate=rec_cfg.get("sample_rate", 16000),
-        channels=rec_cfg.get("channels", 1),
-        speech_threshold=rec_cfg.get("speech_threshold", 500),
-    )
-
-
-transcriber = create_transcriber(config.get("transcriber", {}))
-_log(f"Backend: {transcriber.name}")
-
-overlay = RecordingOverlay()
-overlay.start()
-_log("Overlay: ready")
-
-
-# ---- MCP tools ------------------------------------------------------- #
-
-mcp_recorder = _make_recorder()
-mcp = FastMCP("voice-input")
-
 auto_stop = rec_cfg.get("auto_stop_on_silence", False)
 max_seconds = rec_cfg.get("max_seconds", 300)
 
+
+# ---- lazy-loaded components ------------------------------------------ #
+# These are initialized in a background thread AFTER the MCP handshake
+# so that Claude Code doesn't time out waiting for the server to start.
+
+_components = {
+    "recorder": None,
+    "transcriber": None,
+    "overlay": None,
+    "ready": threading.Event(),
+}
+
+
+def _init_components():
+    """Heavy initialization in a background thread."""
+    try:
+        from src.overlay import RecordingOverlay
+        from src.recorder import VoiceRecorder
+        from src.transcriber import create_transcriber
+
+        _components["recorder"] = VoiceRecorder(
+            sample_rate=rec_cfg.get("sample_rate", 16000),
+            channels=rec_cfg.get("channels", 1),
+            speech_threshold=rec_cfg.get("speech_threshold", 500),
+        )
+
+        _components["transcriber"] = create_transcriber(config.get("transcriber", {}))
+        _log(f"Backend: {_components['transcriber'].name}")
+
+        overlay = RecordingOverlay()
+        overlay.start()
+        _components["overlay"] = overlay
+        _log("Overlay: ready")
+
+        _spawn_hotkey_daemon()
+    except Exception as exc:
+        _log(f"Component init error: {exc}")
+    finally:
+        _components["ready"].set()
+
+
+def _wait_ready(timeout: float = 15):
+    """Block until components are initialized."""
+    _components["ready"].wait(timeout=timeout)
+
+
+# Start background init immediately
+threading.Thread(target=_init_components, daemon=True).start()
+
+
+# ---- MCP tools ------------------------------------------------------- #
 
 @mcp.tool()
 async def voice_record(
@@ -91,44 +115,56 @@ async def voice_record(
     When auto_stop_on_silence is enabled in config, recording stops
     automatically after silence is detected and returns the transcription.
 
-    Otherwise this only **starts** recording — call voice_stop to finish
+    Otherwise this only **starts** recording -- call voice_stop to finish
     and get the transcription.  The user controls when to stop.
 
     Args:
         silence_timeout: (auto-stop mode only) seconds of silence before
                          auto-stop (default 2).
     """
+    await asyncio.to_thread(_wait_ready)
+    recorder = _components["recorder"]
+    overlay = _components["overlay"]
+
+    if not recorder:
+        return "[Error: recorder not initialized]"
+
     if auto_stop:
         # ---- auto-stop path (opt-in) ----
-        overlay.show_recording()
+        if overlay:
+            overlay.show_recording()
         _log("Recording (MCP, auto-stop)...")
         try:
             audio_path = await asyncio.to_thread(
-                mcp_recorder.record_until_silence,
+                recorder.record_until_silence,
                 max_seconds,
                 silence_timeout,
                 _log,
             )
         except Exception as exc:
-            overlay.hide()
+            if overlay:
+                overlay.hide()
             return f"[Recording failed: {exc}]"
 
         if not audio_path:
-            overlay.hide()
+            if overlay:
+                overlay.hide()
             return "[No speech detected.]"
 
         return await _transcribe(audio_path)
 
     # ---- manual-stop path (default) ----
-    overlay.show_recording()
+    if overlay:
+        overlay.show_recording()
     _beep(880, 150)
     try:
-        mcp_recorder.start()
+        recorder.start()
     except Exception as exc:
-        overlay.hide()
+        if overlay:
+            overlay.hide()
         return f"[Recording failed: {exc}]"
 
-    _log("Recording (MCP, manual) — waiting for voice_stop...")
+    _log("Recording (MCP, manual) -- waiting for voice_stop...")
     return "Recording started. The user is speaking. Call voice_stop when they tell you they are done."
 
 
@@ -138,12 +174,17 @@ async def voice_stop() -> str:
 
     Call this after voice_record once the user signals they are finished.
     """
+    await asyncio.to_thread(_wait_ready)
+    recorder = _components["recorder"]
+    overlay = _components["overlay"]
+
     _log("Stopping recording (MCP)...")
     _beep(440, 200)
-    audio_path = await asyncio.to_thread(mcp_recorder.stop)
+    audio_path = await asyncio.to_thread(recorder.stop)
 
     if not audio_path:
-        overlay.hide()
+        if overlay:
+            overlay.hide()
         return "[No audio was captured.]"
 
     return await _transcribe(audio_path)
@@ -151,14 +192,19 @@ async def voice_stop() -> str:
 
 async def _transcribe(audio_path: str) -> str:
     """Shared transcription helper for both MCP flows."""
-    overlay.show_transcribing()
+    transcriber = _components["transcriber"]
+    overlay = _components["overlay"]
+
+    if overlay:
+        overlay.show_transcribing()
     _log("Transcribing...")
     try:
         text = await asyncio.to_thread(transcriber.transcribe, audio_path)
     except Exception as exc:
         return f"[Transcription failed: {exc}]"
     finally:
-        overlay.hide()
+        if overlay:
+            overlay.hide()
         try:
             os.unlink(audio_path)
         except OSError:
@@ -175,128 +221,51 @@ async def _transcribe(audio_path: str) -> str:
 @mcp.tool()
 async def voice_list_devices() -> str:
     """List available audio input devices.  Useful for troubleshooting."""
+    await asyncio.to_thread(_wait_ready)
+    from src.recorder import VoiceRecorder
     return await asyncio.to_thread(VoiceRecorder.list_devices)
 
 
-# ---- global hotkey --------------------------------------------------- #
+# ---- spawn hotkey daemon --------------------------------------------- #
 
-def _setup_hotkey():
-    """Register a system-wide hotkey that toggles recording.
-
-    Press once  -> start recording  (high beep + red overlay).
-    Press again -> stop, transcribe, paste into focused window (double beep).
-    """
+def _spawn_hotkey_daemon():
+    """Launch hotkey_daemon.py as a detached background process."""
     hotkey_cfg = config.get("hotkey", {})
     if not hotkey_cfg.get("enabled", True):
         _log("Hotkey: disabled in config")
         return
 
-    try:
-        import keyboard as kb
-    except ImportError:
-        _log("Hotkey: disabled ('keyboard' package not installed)")
+    daemon_path = os.path.join(SCRIPT_DIR, "hotkey_daemon.py")
+    if not os.path.isfile(daemon_path):
+        _log("Hotkey: hotkey_daemon.py not found")
         return
 
-    binding = hotkey_cfg.get("binding", "ctrl+shift+space")
-    auto_paste = hotkey_cfg.get("auto_paste", True)
-
-    hotkey_rec = _make_recorder()            # dedicated instance
-    state = {"recording": False, "busy": False}
-    lock = threading.Lock()
-
-    def on_hotkey():
-        with lock:
-            if state["busy"]:
-                _beep(330, 100)             # short "busy" tone
-                return
-
-            if not state["recording"]:
-                # ---- START ----
-                state["recording"] = True
-                _beep(880, 150)
-                try:
-                    hotkey_rec.start()
-                    overlay.show_recording()
-                    _log("Hotkey: recording started")
-                except Exception as exc:
-                    _log(f"Hotkey: mic error - {exc}")
-                    _beep(220, 300)
-                    state["recording"] = False
-                    overlay.hide()
-            else:
-                # ---- STOP ----
-                state["recording"] = False
-                state["busy"] = True
-                _beep(440, 200)
-                overlay.show_transcribing()
-                _log("Hotkey: recording stopped")
-
-                audio_path = hotkey_rec.stop()
-                if not audio_path:
-                    _log("Hotkey: empty recording")
-                    _beep(220, 300)
-                    overlay.hide()
-                    state["busy"] = False
-                    return
-
-                threading.Thread(
-                    target=_transcribe_and_paste,
-                    args=(audio_path, auto_paste, state),
-                    daemon=True,
-                ).start()
-
-    def _transcribe_and_paste(audio_path, paste, st):
-        try:
-            _log("Hotkey: transcribing...")
-            text = transcriber.transcribe(audio_path)
-        except Exception as exc:
-            _log(f"Hotkey: transcription error - {exc}")
-            _beep(220, 300)
-            return
-        finally:
-            try:
-                os.unlink(audio_path)
-            except OSError:
-                pass
-            overlay.hide()
-            st["busy"] = False
-
-        if not text or not text.strip():
-            _log("Hotkey: no text returned")
-            _beep(220, 300)
-            return
-
-        text = text.strip()
-        _log(f"Hotkey: transcribed {len(text)} chars")
-
-        # Copy to clipboard and (optionally) simulate Ctrl+V
-        try:
-            import pyperclip
-
-            pyperclip.copy(text)
-            if paste:
-                time.sleep(0.05)
-                kb.send("ctrl+v")
-        except Exception as exc:
-            _log(f"Hotkey: paste error - {exc}")
-            _beep(220, 300)
-            return
-
-        # success - double beep
-        _beep(660, 100)
-        time.sleep(0.06)
-        _beep(660, 100)
-
     try:
-        kb.add_hotkey(binding, on_hotkey, suppress=True)
-        _log(f"Hotkey: registered  [{binding}]")
+        kwargs: dict = dict(
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if os.name == "nt":
+            CREATE_NEW_PROCESS_GROUP = 0x00000200
+            DETACHED_PROCESS = 0x00000008
+            kwargs["creationflags"] = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+
+        # Use pythonw.exe on Windows to avoid a console window
+        python = sys.executable
+        if os.name == "nt":
+            pythonw = os.path.join(os.path.dirname(python), "pythonw.exe")
+            if os.path.isfile(pythonw):
+                python = pythonw
+        subprocess.Popen([python, daemon_path], **kwargs)
+        _log("Hotkey: daemon spawned")
     except Exception as exc:
-        _log(f"Hotkey: failed to register - {exc}")
+        _log(f"Hotkey: failed to spawn daemon - {exc}")
 
 
 # ---- main ------------------------------------------------------------ #
-
-_setup_hotkey()
 
 if __name__ == "__main__":
     mcp.run()

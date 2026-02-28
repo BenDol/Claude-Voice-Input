@@ -1,0 +1,8 @@
+[22:42:56] Daemon starting (PID 95156)
+[22:42:56] Backend: Faster Whisper (local)
+[22:42:56] Hotkey [ctrl+shift+d] active — waiting for input
+[22:42:57] Recording started
+[22:43:03] Recording stopped
+[22:43:03] Transcribing...
+[22:43:05] Transcribed (38 chars): I'm testing the voice input, let's go.
+[22:43:05] Auto-send keyword 'lets go' detected

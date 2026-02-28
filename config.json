@@ -3,7 +3,7 @@
     "backend": "faster_whisper",
     "faster_whisper": {
       "model_size": "base",
-      "device": "auto"
+      "device": "cpu"
     },
     "openai_api": {
       "api_key": "",
@@ -19,7 +19,8 @@
   },
   "hotkey": {
     "enabled": true,
-    "binding": "ctrl+alt+v",
-    "auto_paste": true
+    "binding": "ctrl+shift+d",
+    "auto_paste": true,
+    "auto_send_keywords": ["lets go", "make it happen", "go go", "send it"]
   }
 }

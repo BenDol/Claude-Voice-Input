@@ -48,19 +48,27 @@ class OpenAIWhisperAPI(Transcriber):
 
 class FasterWhisperLocal(Transcriber):
     def __init__(self, model_size: str = "base", device: str = "auto"):
+        self._model_size = model_size
+        self._device = device
+        self._model = None
+
+    def _ensure_model(self):
+        if self._model is not None:
+            return
         try:
             from faster_whisper import WhisperModel
         except ImportError:
             raise ImportError(
                 "faster-whisper is not installed.  Run:  pip install faster-whisper"
             )
-        self._model = WhisperModel(model_size, device=device)
+        self._model = WhisperModel(self._model_size, device=self._device)
 
     @property
     def name(self) -> str:
         return "Faster Whisper (local)"
 
     def transcribe(self, audio_path: str) -> str:
+        self._ensure_model()
         segments, _ = self._model.transcribe(audio_path)
         return " ".join(seg.text.strip() for seg in segments)
 

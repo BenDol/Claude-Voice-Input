@@ -5,7 +5,20 @@
       "Bash(cmd:*)",
       "Bash(python:*)",
       "Bash(.venv/Scripts/pip install:*)",
-      "Bash(.venv/Scripts/python:*)"
+      "Bash(.venv/Scripts/python:*)",
+      "Bash(kill 67784:*)",
+      "Bash(timeout 5 .venv/Scripts/python:*)",
+      "Bash(tasklist:*)",
+      "Bash(wmic process:*)",
+      "Bash(do echo:*)",
+      "Bash(taskkill:*)",
+      "Bash(timeout 10 .venv/Scripts/python:*)",
+      "Bash(test:*)",
+      "Bash(timeout 5 C:/Projects/claude/plugins/voice-input/.venv/Scripts/python.exe:*)",
+      "Bash(xargs grep:*)",
+      "Bash(C:/Projects/claude/plugins/voice-input/.venv/Scripts/python.exe:*)",
+      "Bash(C:/Projects/claude/plugins/voice-input/.venv/Scripts/pip show:*)",
+      "Bash(claude mcp:*)"
     ]
   }
 }
