@@ -101,6 +101,7 @@ def main():
         return
 
     binding = hotkey_cfg.get("binding", "ctrl+alt+v")
+    mode = hotkey_cfg.get("mode", "toggle")  # "toggle" or "hold"
     auto_paste = hotkey_cfg.get("auto_paste", True)
     auto_send_keywords = [kw.lower().strip() for kw in hotkey_cfg.get("auto_send_keywords", [])]
     auto_stop_on_keyword = hotkey_cfg.get("auto_stop_on_keyword", True)
@@ -147,10 +148,29 @@ def main():
 
     _log(f"Backend: {transcriber.name}")
 
-    # ---- hotkey toggle ---- #
+    # ---- hotkey toggle / hold ---- #
 
     state = {"recording": False, "busy": False}
     lock = threading.Lock()
+
+    def _start_recording():
+        """Start recording. Caller must hold lock and ensure not busy/already recording."""
+        state["recording"] = True
+        _beep(880, 150)
+        try:
+            recorder.start()
+            overlay.show_recording()
+            _log("Recording started")
+            if auto_stop_on_keyword and auto_send_keywords:
+                threading.Thread(
+                    target=_keyword_watch_loop,
+                    daemon=True,
+                ).start()
+        except Exception as exc:
+            _log(f"Mic error: {exc}")
+            _beep(220, 300)
+            state["recording"] = False
+            overlay.hide()
 
     def _stop_and_transcribe():
         """Stop recording and kick off transcription. Caller must hold lock."""
@@ -175,32 +195,30 @@ def main():
         ).start()
 
     def on_hotkey():
+        """Toggle mode: press to start, press again to stop."""
         with lock:
             if state["busy"]:
                 _beep(330, 100)
                 return
 
             if not state["recording"]:
-                # ---- START ----
-                state["recording"] = True
-                _beep(880, 150)
-                try:
-                    recorder.start()
-                    overlay.show_recording()
-                    _log("Recording started")
-                    if auto_stop_on_keyword and auto_send_keywords:
-                        threading.Thread(
-                            target=_keyword_watch_loop,
-                            daemon=True,
-                        ).start()
-                except Exception as exc:
-                    _log(f"Mic error: {exc}")
-                    _beep(220, 300)
-                    state["recording"] = False
-                    overlay.hide()
+                _start_recording()
             else:
-                # ---- STOP ----
                 _stop_and_transcribe()
+
+    def on_hold_press():
+        """Hold mode: key pressed — start recording."""
+        with lock:
+            if state["busy"] or state["recording"]:
+                return
+            _start_recording()
+
+    def on_hold_release(event):
+        """Hold mode: key released — stop recording."""
+        with lock:
+            if not state["recording"] or state["busy"]:
+                return
+            _stop_and_transcribe()
 
     def _keyword_watch_loop():
         """Periodically transcribe tail audio to detect auto-send keywords."""
@@ -338,12 +356,19 @@ def main():
     # ---- register and block ---- #
 
     try:
-        kb.add_hotkey(binding, on_hotkey, suppress=True)
+        if mode == "hold":
+            # Hold mode: start on press, stop on release of the trigger key
+            # Parse the trigger key (last key in the binding, e.g. "q" from "alt+q")
+            trigger_key = binding.split("+")[-1].strip()
+            kb.add_hotkey(binding, on_hold_press, suppress=True, trigger_on_release=False)
+            kb.on_release(lambda e: on_hold_release(e) if e.name == trigger_key else None)
+            _log(f"Hotkey [{binding}] active (hold mode, trigger={trigger_key}) — waiting for input")
+        else:
+            kb.add_hotkey(binding, on_hotkey, suppress=True)
+            _log(f"Hotkey [{binding}] active (toggle mode) — waiting for input")
     except Exception as exc:
         _log(f"Failed to register hotkey: {exc}")
         return
-
-    _log(f"Hotkey [{binding}] active — waiting for input")
 
     try:
         kb.wait()
