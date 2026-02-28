@@ -109,6 +109,12 @@ def main():
     undo_phrases = [p.lower().strip() for p in hotkey_cfg.get("undo_phrases", [
         "forget that last part", "forget that", "actually forget that",
     ]) if p and p.strip()] if undo_enabled else []
+    scope = hotkey_cfg.get("scope", "global")  # "global" or "focused"
+    scope_patterns = [p.lower() for p in hotkey_cfg.get("scope_title_patterns", ["claude"])]
+    scope_process_patterns = [p.lower() for p in hotkey_cfg.get("scope_process_patterns", [
+        "cmd.exe", "powershell.exe", "pwsh.exe", "windowsterminal.exe",
+        "wt.exe", "alacritty.exe", "wezterm-gui.exe",
+    ])]
 
     # ---- load components ---- #
 
@@ -147,6 +153,22 @@ def main():
         return
 
     _log(f"Backend: {transcriber.name}")
+
+    # ---- scope helper ---- #
+
+    def _is_target_window_focused() -> bool:
+        """Check if the foreground window matches by title or process name."""
+        if scope != "focused":
+            return True
+        try:
+            from src.window_title import get_foreground_window_title, get_foreground_process_name
+            title = get_foreground_window_title().lower()
+            if any(p in title for p in scope_patterns):
+                return True
+            proc = get_foreground_process_name().lower()
+            return any(p in proc for p in scope_process_patterns)
+        except Exception:
+            return False
 
     # ---- hotkey toggle / hold ---- #
 
@@ -196,6 +218,8 @@ def main():
 
     def on_hotkey():
         """Toggle mode: press to start, press again to stop."""
+        if not state["recording"] and not _is_target_window_focused():
+            return
         with lock:
             if state["busy"]:
                 _beep(330, 100)
@@ -208,6 +232,8 @@ def main():
 
     def on_hold_press():
         """Hold mode: key pressed — start recording."""
+        if not _is_target_window_focused():
+            return
         with lock:
             if state["busy"] or state["recording"]:
                 return
@@ -355,17 +381,19 @@ def main():
 
     # ---- register and block ---- #
 
+    suppress = scope != "focused"
+
     try:
         if mode == "hold":
             # Hold mode: start on press, stop on release of the trigger key
             # Parse the trigger key (last key in the binding, e.g. "q" from "alt+q")
             trigger_key = binding.split("+")[-1].strip()
-            kb.add_hotkey(binding, on_hold_press, suppress=True, trigger_on_release=False)
+            kb.add_hotkey(binding, on_hold_press, suppress=suppress, trigger_on_release=False)
             kb.on_release(lambda e: on_hold_release(e) if e.name == trigger_key else None)
-            _log(f"Hotkey [{binding}] active (hold mode, trigger={trigger_key}) — waiting for input")
+            _log(f"Hotkey [{binding}] active (hold mode, trigger={trigger_key}, scope={scope}) — waiting for input")
         else:
-            kb.add_hotkey(binding, on_hotkey, suppress=True)
-            _log(f"Hotkey [{binding}] active (toggle mode) — waiting for input")
+            kb.add_hotkey(binding, on_hotkey, suppress=suppress)
+            _log(f"Hotkey [{binding}] active (toggle mode, scope={scope}) — waiting for input")
     except Exception as exc:
         _log(f"Failed to register hotkey: {exc}")
         return

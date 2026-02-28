@@ -140,6 +140,13 @@ def step_install_slash_commands():
     commands_dir = os.path.join(claude_dir, "commands")
     os.makedirs(commands_dir, exist_ok=True)
 
+    # Remove old separate voice-* commands (consolidated into /voice)
+    for old in ("voice-kill.md", "voice-start.md", "voice-restart.md"):
+        old_path = os.path.join(commands_dir, old)
+        if os.path.exists(old_path):
+            os.unlink(old_path)
+            _print(f"  Removed old /{old.removesuffix('.md')}")
+
     src_dir = os.path.join(PLUGIN_DIR, "commands")
     for filename in sorted(os.listdir(src_dir)):
         if not filename.endswith(".md"):
@@ -174,7 +181,10 @@ def step_show_summary():
     _print("           Press once to record, again to stop.")
     _print("           Text is pasted into the prompt automatically.")
     _print()
-    _print("  /voice   Alternative: triggers recording via Claude.")
+    _print("  /voice          Record voice via Claude")
+    _print("  /voice start    Start the hotkey daemon")
+    _print("  /voice restart  Restart the hotkey daemon")
+    _print("  /voice kill     Stop all voice processes")
     _print()
     _print("Visual indicator:")
     _print("  Red pill (bottom-right of active window) = recording")

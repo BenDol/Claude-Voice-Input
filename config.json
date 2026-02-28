@@ -22,7 +22,7 @@
   "recording": {
     "sample_rate": 16000,
     "channels": 1,
-    "speech_threshold": 500,
+    "speech_threshold": 20,
     "auto_stop_on_silence": false,
     "max_seconds": 300
   },
@@ -34,6 +34,9 @@
     "auto_send_keywords": ["lets go", "make it happen", "go go", "send it", "send", "over and out"],
     "auto_stop_on_keyword": true,
     "undo_enabled": true,
-    "undo_phrases": ["forget that last part", "forget that", "actually forget that"]
+    "undo_phrases": ["forget that last part", "forget that", "actually forget that"],
+    "scope": "focused",
+    "scope_title_patterns": ["claude"],
+    "scope_process_patterns": ["cmd.exe", "powershell.exe", "pwsh.exe", "windowsterminal.exe"]
   }
 }
