@@ -157,8 +157,11 @@ class RecordingOverlay:
         self._bar_ids: list = []
         self._label = None
         self._ready = threading.Event()
-        self._screen_w = 0
-        self._screen_h = 0
+        # Virtual desktop bounds (all monitors combined)
+        self._virt_left = 0
+        self._virt_top = 0
+        self._virt_right = 0
+        self._virt_bottom = 0
         self._win_w = _WIN_W
         self._win_h = _WIN_H
         # Audio levels: list of floats 0.0–1.0, one per bar
@@ -201,6 +204,18 @@ class RecordingOverlay:
             self._ready.set()
             return
 
+        # Enable DPI awareness on Windows so coordinates match across monitors
+        if os.name == "nt":
+            try:
+                import ctypes
+                ctypes.windll.shcore.SetProcessDpiAwareness(1)
+            except Exception:
+                try:
+                    import ctypes
+                    ctypes.windll.user32.SetProcessDPIAware()
+                except Exception:
+                    pass
+
         root = tk.Tk()
         self._root = root
 
@@ -221,8 +236,8 @@ class RecordingOverlay:
                 root.configure(bg=bg)
                 canvas_bg = bg
 
-        self._screen_w = root.winfo_screenwidth()
-        self._screen_h = root.winfo_screenheight()
+        # Get virtual desktop bounds (spans all monitors)
+        self._init_virtual_bounds(root)
 
         font_family = "Segoe UI" if os.name == "nt" else "sans-serif"
 
@@ -317,9 +332,33 @@ class RecordingOverlay:
 
     # ---- positioning ------------------------------------------------- #
 
+    def _init_virtual_bounds(self, root):
+        """Detect virtual desktop bounds spanning all monitors."""
+        if os.name == "nt":
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                SM_XVIRTUALSCREEN = 76
+                SM_YVIRTUALSCREEN = 77
+                SM_CXVIRTUALSCREEN = 78
+                SM_CYVIRTUALSCREEN = 79
+                self._virt_left = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+                self._virt_top = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+                self._virt_right = self._virt_left + user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+                self._virt_bottom = self._virt_top + user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+                return
+            except Exception:
+                pass
+        # Fallback: primary monitor only
+        self._virt_left = 0
+        self._virt_top = 0
+        self._virt_right = root.winfo_screenwidth()
+        self._virt_bottom = root.winfo_screenheight()
+
     def _fallback_geometry(self) -> str:
-        x = (self._screen_w - self._win_w) // 2
-        y = self._screen_h - self._win_h - _BOTTOM_PAD - 40
+        cx = (self._virt_left + self._virt_right) // 2
+        x = cx - self._win_w // 2
+        y = self._virt_bottom - self._win_h - _BOTTOM_PAD - 40
         return f"{self._win_w}x{self._win_h}+{x}+{y}"
 
     def _reposition(self):
@@ -328,11 +367,12 @@ class RecordingOverlay:
         if rect:
             left, top, right, bottom = rect
             win_center = (left + right) // 2
-            x = max(0, min(win_center - self._win_w // 2, self._screen_w - self._win_w))
-            y = max(0, min(bottom - self._win_h - _BOTTOM_PAD, self._screen_h - self._win_h - _BOTTOM_PAD))
+            x = max(self._virt_left, min(win_center - self._win_w // 2, self._virt_right - self._win_w))
+            y = max(self._virt_top, min(bottom - self._win_h - _BOTTOM_PAD, self._virt_bottom - self._win_h - _BOTTOM_PAD))
         else:
-            x = (self._screen_w - self._win_w) // 2
-            y = self._screen_h - self._win_h - _BOTTOM_PAD - 40
+            cx = (self._virt_left + self._virt_right) // 2
+            x = cx - self._win_w // 2
+            y = self._virt_bottom - self._win_h - _BOTTOM_PAD - 40
         self._target_x = x
         self._target_y = y
         # Only set geometry directly when not animating
